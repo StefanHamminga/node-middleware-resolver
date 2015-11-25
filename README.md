@@ -2,8 +2,7 @@
 Dependency (and semi-event) based middleware running.
 
 ## Task format
-A tasks/jobs list is an object with keys corresponding to the task names.
-The value for each key is a task requirements specification:
+A tasks/jobs list is an array containing task descriptors:
 
 property | description
 ---|---
@@ -15,19 +14,26 @@ property | description
 
 For example:
 ```javascript
-{
-    task7: {
+[
+    {
+        name: "task7",
         requires: [ "task6" ],
         optional: "task1",
         task: function (done, next) {
             // more code
-            done("task7"); // Emit any event/dependency that is satisfied.
+
+            /*  Emit the task name and, optionally, any auxiliary event /
+                dependency that is satisfied. The done function can be used as
+                many times as practical, or not at all (eg. a case of failure).
+             */
+            done("task7");
+
             // more code
             next(); // Run the next task
             // more code
         }
     }
-}
+]
 
 ```
 

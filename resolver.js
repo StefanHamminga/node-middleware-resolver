@@ -14,17 +14,27 @@ You should have received a copy of the GNU Lesser General Public License along
 with this library.
 */
 
-// Convert any property to an array, if not already.
-function toArray (item) {
+var util = require('util');
+
+// Convert an Array to an Object, if not already
+function toObject(item) {
     "use strict";
-    if (item) {
-        if (!(item instanceof Array)) {
-            item = [ item ];
+    if (item instanceof Array) {
+        let result = {};
+        for (let i = 0; i < item.length; i++) {
+            result[item[i]] = true;
         }
+        return result;
     } else {
-        return [];
+        let type = typeof item;
+        if (type === "string" || type === "number") {
+            return { item: true };
+        } else if (type === "undefined") {
+            return {};
+        } else {
+            return item;
+        }
     }
-    return item;
 }
 
 /**
@@ -34,32 +44,39 @@ function toArray (item) {
 function Resolver(jobs) {
     "use strict";
 
-    var tree = { run: run, base: [] };
+    var tree = { debug: false, run: run, jobs: new Array(jobs.length) };
 
-    Object.defineProperty(tree, "jobs", { value: [] });
+    for (let i = 0; i < jobs.length; i++) {
+        let job = jobs[i];
 
-    // Task names
-    let keys = Object.keys(jobs);
+        // Fetch the possible provides from the job function bodies
+        let provides = JSON.parse("[" + /done[\s]?\(([^)]+)\)/g.exec(job.task.toString())[1] + "]");
+        job.provides    = toObject(provides);
 
-    for (let i = 0; i < keys.length; i++) {
-        let key = keys[i];
-        let job = jobs[key];
-        job.name = key;
-
-        job.requires    = toArray(job.requires);
-        job.notif       = toArray(job.notif);
-        job.optional    = toArray(job.optional);
-        job.before      = toArray(job.before);
+        job.requires    = toObject(job.requires);
+        job.notif       = toObject(job.notif);
+        job.optional    = toObject(job.optional);
+        job.before      = toObject(job.before);
 
         // NotIf implies a specific execution order, thus we add them as optional dependency.
-        Array.prototype.push.apply(job.optional, job.notif);
+        Object.keys(job.notif).forEach(function (val) {
+            job.optional[val] = true;
+        });
+        // Array.prototype.push.apply(job.optional, job.notif);
+
+        tree.jobs[i] = job;
+    }
+
+    for (let i = 0; i < tree.jobs.length; i++) {
+        let job = tree.jobs[i];
 
         // Look if we have reverse dependencies and add them to any found jobs as normal requires.
         for (let j = 0; j < job.before.length; j++) {
-            let j = jobs[job.before[i]];
-            if (j) {
-                j.requires = toArray(j.requires);
-                j.requires.push(job.name);
+            let condition = job.before[j];
+            for (let k = 0; k < tree.jobs.length; k++) {
+                if (tree.jobs[k].provides.indexOf(condition) > -1) {
+                    tree.jobs[k].requires.push(job.name);
+                }
             }
         }
 
@@ -70,22 +87,27 @@ function Resolver(jobs) {
                 job.requires.push(o);
             }
         }
-
-        tree.jobs.push(job);
     }
 
-    // Sort roughly on dependency amount
+    //==========================================================================
+    /*  TODO: Figure out why sorting makes execution significantly slower,
+        instead of faster. I'm guessing the sorted arrays have a significantly
+        worse memory structure. */
+
+    //Sort roughly on dependency amount
     tree.jobs.sort(function (a, b) {
-        a.requires = toArray(a.requires);
-        b.requires = toArray(b.requires);
-        return a.requires.length - b.requires.length;
+        return Object.keys(a.requires).length - Object.keys(b.requires).length;
     });
+    //==========================================================================
+
+    console.log(util.inspect(tree.jobs, { colors: true }));
 
     /**
      * Run the initialized jobs, optionally using `context` as an execution context
      * @param  {[Object]} context Content to be applied with `bind`
      */
     function run(context) {
+        if (tree.debug) console.log("\x1b[93mRunning new stack.\x1b[0m");
         let has = {};
 
         // By far the fastest way to clone an array: https://jsperf.com/new-array-vs-splice-vs-slice/113
@@ -94,12 +116,17 @@ function Resolver(jobs) {
         while(stackPos--) { stack[stackPos] = tree.jobs[stackPos]; }
 
         function canRun(job) {
-            return (job.notif.every(function (elem) {
-                        return (!(has[elem] === true));
-                    }) && job.requires.every(function(elem) {
-                        return (has[elem] === true);
-                    })
-                );
+            for (let item in job.notif) {
+                if (has[item] === true) {
+                    return false;
+                }
+            }
+            for (let item in job.requires) {
+                if (!(has[item] === true)) {
+                    return false;
+                }
+            }
+            return true;
         }
 
         function doneHandler () {
@@ -112,13 +139,18 @@ function Resolver(jobs) {
             for (let i = 0; i < stack.length; i ++) {
                 if (canRun(stack[i])) {
                     let job = stack.splice(i, 1)[0];
-                    var func;
-                    if (context) {
-                        func = (job.task).bind(context);
-                    } else {
-                        func = job.task;
+                    if (tree.debug) {
+                        console.log("Jobs done: \x1b[92m" +
+                                    Object.keys(has).join(', ') +
+                                    "\x1b[0m. Starting job: \x1b[94m" +
+                                    job.name +
+                                    "\x1b[0m");
                     }
-                    func(doneHandler, nextHandler);
+                    if (context) {
+                        (job.task).bind(context)(doneHandler, nextHandler);
+                    } else {
+                        job.task(doneHandler, nextHandler);
+                    }
                     break;
                 }
             }
