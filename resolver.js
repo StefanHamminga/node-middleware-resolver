@@ -16,7 +16,8 @@ with this library.
 
 var util = require('util');
 
-// Convert an Array to an Object, if not already
+// Convert an Array to an Object, if not already. Wanna know why? Have a look:
+// https://jsperf.com/array-indexof-vs-object-key-vs-object-key-true
 function toObject(item) {
     "use strict";
     if (item instanceof Array) {
@@ -28,7 +29,9 @@ function toObject(item) {
     } else {
         let type = typeof item;
         if (type === "string" || type === "number") {
-            return { item: true };
+            let ret = {};
+            ret[item] = true;
+            return ret;
         } else if (type === "undefined") {
             return {};
         } else {
@@ -50,9 +53,15 @@ function Resolver(jobs) {
         let job = jobs[i];
 
         // Fetch the possible provides from the job function bodies
-        let provides = JSON.parse("[" + /done[\s]?\(([^)]+)\)/g.exec(job.task.toString())[1] + "]");
+        let provideMatches = job.task.toString().match(/[;{}\s\t ]done[\s]?\([^)]+\)/gm);
+        let provides = [];
+        if (provideMatches) {
+            for (let k = 0; k < provideMatches.length; k++) {
+                let match = provideMatches[k].replace(/^.*\(/, "").replace(/\).*$/, "");
+                Array.prototype.push.apply(provides, JSON.parse("[" + match + "]"));
+            }
+        }
         job.provides    = toObject(provides);
-
         job.requires    = toObject(job.requires);
         job.notif       = toObject(job.notif);
         job.optional    = toObject(job.optional);
@@ -100,8 +109,6 @@ function Resolver(jobs) {
     });
     //==========================================================================
 
-    console.log(util.inspect(tree.jobs, { colors: true }));
-
     /**
      * Run the initialized jobs, optionally using `context` as an execution context
      * @param  {[Object]} context Content to be applied with `bind`
@@ -116,17 +123,18 @@ function Resolver(jobs) {
         while(stackPos--) { stack[stackPos] = tree.jobs[stackPos]; }
 
         function canRun(job) {
+            let can = true;
             for (let item in job.notif) {
                 if (has[item] === true) {
                     return false;
                 }
             }
             for (let item in job.requires) {
-                if (!(has[item] === true)) {
+                if (has[item] !== true) {
                     return false;
                 }
             }
-            return true;
+            return can;
         }
 
         function doneHandler () {

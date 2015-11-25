@@ -32,7 +32,7 @@ var testJobs = [
 ];
 
 var start = new Date();
-var stack = Resolver(testJobs);
+var stack = new Resolver(testJobs);
 var initTime = new Date() - start;
 
 stack.debug = true;
