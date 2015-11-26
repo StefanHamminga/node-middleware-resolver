@@ -67,6 +67,9 @@ function Resolver(jobs) {
         job.optional    = toObject(job.optional);
         job.before      = toObject(job.before);
 
+        // Provide self
+        job.provides[job.name] = true;
+
         // NotIf implies a specific execution order, thus we add them as optional dependency.
         Object.keys(job.notif).forEach(function (val) {
             job.optional[val] = true;
@@ -80,20 +83,20 @@ function Resolver(jobs) {
         let job = tree.jobs[i];
 
         // Look if we have reverse dependencies and add them to any found jobs as normal requires.
-        for (let j = 0; j < job.before.length; j++) {
-            let condition = job.before[j];
+        for (let before in job.before) {
             for (let k = 0; k < tree.jobs.length; k++) {
-                if (tree.jobs[k].provides.indexOf(condition) > -1) {
-                    tree.jobs[k].requires.push(job.name);
+                if (tree.jobs[k].provides[before] === true) {
+                    tree.jobs[k].requires[job.name] = true;
                 }
             }
         }
 
         // If jobs are present and named as optional they get added to the required list
-        for (let j = 0; j < job.optional.length; j++) {
-            let o = job.optional[j];
-            if (jobs[o]) {
-                job.requires.push(o);
+        for (let optional in job.optional) {
+            for (let k = 0; k < tree.jobs.length; k++) {
+                if (tree.jobs[k].provides[optional] === true) {
+                    job.requires[optional] = true;
+                }
             }
         }
     }

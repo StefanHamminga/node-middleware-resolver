@@ -1,6 +1,6 @@
 {
   "name": "middleware-resolver",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Dependency / event based middleware resolver and running library.",
   "main": "resolver.js",
   "scripts": {
