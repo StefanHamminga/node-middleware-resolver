@@ -130,7 +130,12 @@ function Resolver(jobs) {
      * @param  {[Object]} context Content to be applied with `bind`
      */
     function run(context) {
-        if (tree.debug) console.log("\x1b[93mRunning new stack.\x1b[0m");
+        if (tree.debug) {
+            console.log("\x1b[93mRunning new stack.\x1b[0m");
+            var pad = function (a){return("________"+a).slice(-8);};
+            var time = function(){let t=process.hrtime();return(t[0]*1000000+t[1]/1000).toFixed(0); };
+            var us = time();
+        }
         let has = {};
 
         // By far the fastest way to clone an array: https://jsperf.com/new-array-vs-splice-vs-slice/113
@@ -172,9 +177,9 @@ function Resolver(jobs) {
                     let job = stack.splice(i, 1)[0];
                     if (shouldRun(job)) {
                         if (tree.debug) {
-                            console.log("Jobs done: \x1b[92m" +
+                            console.log(pad(time() - us) + "μs: Done: \x1b[92m" +
                                         Object.keys(has).join(', ') +
-                                        "\x1b[0m. Starting job: \x1b[94m" +
+                                        "\x1b[0m. Starting: \x1b[94m" +
                                         job.name +
                                         "\x1b[0m");
                         }
