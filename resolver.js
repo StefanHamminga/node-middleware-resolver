@@ -103,7 +103,26 @@ function Resolver(jobs) {
 
     //Sort roughly on dependency amount
     tree.jobs.sort(function (a, b) {
-        return Object.keys(a.requires).length - Object.keys(b.requires).length;
+        let ad = Object.keys(a.requires).length;
+        let bd = Object.keys(b.requires).length;
+
+        if (ad === bd) {
+            if (a.priority) {
+                if (b.priority) {
+                    return b.priority - a.priority;
+                } else {
+                    return 0 - a.priority;
+                }
+            } else {
+                if (b.priority) {
+                    return b.priority;
+                } else {
+                    return 0;
+                }
+            }
+        } else {
+            return ad - bd;
+        }
     });
 
     /**

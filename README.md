@@ -10,6 +10,7 @@ property | description
 `optional` | Jobs that, if present, should be run before this one.
 `before` | Jobs that, if present, will only run after this job completes (reverse dependency)
 `notif` | Don't run if task is completed. Implies optional dependency
+`priority` | Priority hint. Higher means closer to the outter/first run middleware.
 `task` | `function (done, next)` to execute. In the function body next("result_name");
 
 For example:
@@ -19,6 +20,7 @@ For example:
         name: "task7",
         requires: [ "task6" ],
         optional: "task1",
+	priority: 10,
         task: function (done, next) {
             // more code
 
