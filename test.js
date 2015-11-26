@@ -7,7 +7,7 @@ var util = require('util');
 var context = {
     bla: "BLAAA"
 };
-var runs = 10;
+var runs = 1000;
 
 
 /*  Job format

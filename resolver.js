@@ -101,16 +101,10 @@ function Resolver(jobs) {
         }
     }
 
-    //==========================================================================
-    /*  TODO: Figure out why sorting makes execution significantly slower,
-        instead of faster. I'm guessing the sorted arrays have a significantly
-        worse memory structure. */
-
     //Sort roughly on dependency amount
     tree.jobs.sort(function (a, b) {
         return Object.keys(a.requires).length - Object.keys(b.requires).length;
     });
-    //==========================================================================
 
     /**
      * Run the initialized jobs, optionally using `context` as an execution context
@@ -126,7 +120,6 @@ function Resolver(jobs) {
         while(stackPos--) { stack[stackPos] = tree.jobs[stackPos]; }
 
         function canRun(job) {
-            let can = true;
             for (let item in job.notif) {
                 if (has[item] === true) {
                     return false;
@@ -137,7 +130,15 @@ function Resolver(jobs) {
                     return false;
                 }
             }
-            return can;
+            return true;
+        }
+        function shouldRun(job) {
+            for (let provide in job.provides) {
+                if (has[provide] !== true) {
+                    return true;
+                }
+            }
+            return false;
         }
 
         function doneHandler () {
@@ -147,22 +148,31 @@ function Resolver(jobs) {
         }
 
         function nextHandler () {
-            for (let i = 0; i < stack.length; i ++) {
+            for (let i = 0; i < stack.length;) {
                 if (canRun(stack[i])) {
                     let job = stack.splice(i, 1)[0];
-                    if (tree.debug) {
-                        console.log("Jobs done: \x1b[92m" +
-                                    Object.keys(has).join(', ') +
-                                    "\x1b[0m. Starting job: \x1b[94m" +
-                                    job.name +
-                                    "\x1b[0m");
-                    }
-                    if (context) {
-                        (job.task).bind(context)(doneHandler, nextHandler);
+                    if (shouldRun(job)) {
+                        if (tree.debug) {
+                            console.log("Jobs done: \x1b[92m" +
+                                        Object.keys(has).join(', ') +
+                                        "\x1b[0m. Starting job: \x1b[94m" +
+                                        job.name +
+                                        "\x1b[0m");
+                        }
+                        if (context) {
+                            (job.task).bind(context)(doneHandler, nextHandler);
+                        } else {
+                            job.task(doneHandler, nextHandler);
+                        }
+                        break;
                     } else {
-                        job.task(doneHandler, nextHandler);
+                        if (tree.debug) {
+                            console.log("Skipping job: \x1b[94m" + job.name +
+                                        "\x1b[0m, all possible outcomes already satisfied by previous middleware.");
+                        }
                     }
-                    break;
+                } else {
+                    i++;
                 }
             }
         }
