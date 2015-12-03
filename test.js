@@ -1,5 +1,3 @@
-#!/usr/bin/node
-
 var Resolver = require("./resolver.js");
 
 var util = require('util');
@@ -7,7 +5,7 @@ var util = require('util');
 var context = {
     bla: "BLAAA"
 };
-var runs = 1000;
+var runs = 10000;
 
 
 /*  Job format
@@ -24,7 +22,7 @@ var testJobs = [
     { name: "task2", requires: [ "task6" ],                        task: function (done, next) { done("task2"); next(); } },
     { name: "task3", requires: [ "task1", "task2" ],               task: function (done, next) { done("task3"); next(); } },
     { name: "task4", requires: [ "task3" ],                        task: function (done, next) { done("task4"); next(); } },
-    { name: "task5", requires: [ "task4" ],                        task: function (done, next) { done("task5"); next(); } },
+    { name: "task5", requires: [ "task11" ],                        task: function (done, next) { done("task5"); next(); } },
     { name: "task6", requires: [ "task1" ],                        task: function (done, next) { done("task6"); next(); } },
     { name: "task7", requires: [ "task6" ], optional: [ "task1" ], task: function (done, next) { done("task7"); next(); } },
     { name: "task8", before: "task2",                              task: function (done, next) { done("task8"); next(); } },
@@ -35,7 +33,9 @@ var start = new Date();
 var stack = new Resolver(testJobs);
 var initTime = new Date() - start;
 
-stack.debug = true;
+if (process.argv[2] === 'debug') {
+	stack.debug = true;
+}
 
 start = new Date();
 for (var i = 0; i < runs; i++) {

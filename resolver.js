@@ -15,137 +15,236 @@ with this library.
 */
 
 var util = require('util');
+var inspect = function (item) { return util.inspect(item, { colors: true, depth: 4, showHidden: false, customInspect: false }); };
 
-// Convert an Array to an Object, if not already. Wanna know why? Have a look:
+// Convert any number of input items to a single Object. Wanna know why? Have a look:
 // https://jsperf.com/array-indexof-vs-object-key-vs-object-key-true
-function toObject(item) {
+function toObject() {
     "use strict";
-    if (item instanceof Array) {
-        let result = {};
-        for (let i = 0; i < item.length; i++) {
-            result[item[i]] = true;
-        }
-        return result;
-    } else {
-        let type = typeof item;
-        if (type === "string" || type === "number") {
-            let ret = {};
+    let ret = {};
+
+    for (let item of arguments) {
+        if (item instanceof Array) {
+            for (let i = 0; i < item.length; i++) {
+                if (typeof item !== 'undefined') {
+                    ret[item[i]] = true;
+                }
+            }
+        } else if (typeof item !== 'undefined') {
             ret[item] = true;
-            return ret;
-        } else if (type === "undefined") {
-            return {};
-        } else {
-            return item;
         }
     }
+    return ret;
 }
 
-/**
- * Middleware resolver - Returns a partly pre-resolved runnable middleware object
- * @param {Object} jobs Object describing jobs, see documentation.
- */
-function Resolver(jobs) {
+module.exports = function (middlewares) {
     "use strict";
+    var base = {
+        debug: false,
+        // rebuild: rebuild,
+        add: add,
+        remove: remove,
+        set: set,
+        run: run,
+        jobs: {}, /* Flat list of jobs */
+        stack: []
+    };
 
-    var tree = { debug: false, run: run, jobs: new Array(jobs.length) };
+    // Recalculate dependency tree
+    function rebuild() {
+        let allProvides = {};
 
-    for (let i = 0; i < jobs.length; i++) {
-        let job = jobs[i];
+        // Primary cloning and preparation run.
+        for (let name of Object.keys(base.jobs)) {
+            let job = base.jobs[name];
+            // Fetch the possible provides from the job function bodies
+            let provideMatches = job.task.toString().match(/[;{}\s\t ]done[\s]?\([^)]+\)/gm);
+            let provides = [ job.name ];
+            if (provideMatches) {
+                for (let k = 0; k < provideMatches.length; k++) {
+                    let match = provideMatches[k].replace(/^.*\(/, "").replace(/\).*$/, "");
+                    Array.prototype.push.apply(provides, JSON.parse("[" + match + "]"));
+                }
+            }
+            let requires = toObject(job.requires);
 
-        // Fetch the possible provides from the job function bodies
-        let provideMatches = job.task.toString().match(/[;{}\s\t ]done[\s]?\([^)]+\)/gm);
-        let provides = [];
-        if (provideMatches) {
-            for (let k = 0; k < provideMatches.length; k++) {
-                let match = provideMatches[k].replace(/^.*\(/, "").replace(/\).*$/, "");
-                Array.prototype.push.apply(provides, JSON.parse("[" + match + "]"));
+            base.stack.push({
+                name:       job.name,
+                task:       job.task,
+                provides:   toObject(provides),
+                requires:   requires,
+                notif:      toObject(job.notif),
+                optional:   toObject(job.optional),
+                before:     toObject(job.before),
+                after:      toObject(job.after),
+                doneBefore: {}
+            });
+            for (let n of provides) {
+                allProvides[n] = true;
             }
         }
-        job.provides    = toObject(provides);
-        job.requires    = toObject(job.requires);
-        job.notif       = toObject(job.notif);
-        job.optional    = toObject(job.optional);
-        job.before      = toObject(job.before);
 
-        // Provide self
-        job.provides[job.name] = true;
-
-        // NotIf implies a specific execution order, thus we add them as optional dependency.
-        Object.keys(job.notif).forEach(function (val) {
-            job.optional[val] = true;
-        });
-        // Array.prototype.push.apply(job.optional, job.notif);
-
-        tree.jobs[i] = job;
-    }
-
-    for (let i = 0; i < tree.jobs.length; i++) {
-        let job = tree.jobs[i];
-
-        // Look if we have reverse dependencies and add them to any found jobs as normal requires.
-        for (let before in job.before) {
-            for (let k = 0; k < tree.jobs.length; k++) {
-                if (tree.jobs[k].provides[before] === true) {
-                    tree.jobs[k].requires[job.name] = true;
+        // Filter out impossible jobs
+        for (let i = 0; i < base.stack.length; i++) {
+            for (let req in base.stack[i].requires) {
+                if (allProvides[req] !== true) {
+                    if (base.debug) {
+                        console.log("\x1b[91mWarning\x1b[0m: Middleware '" + base.stack[i].name + "' can't ever run, discarding it.");
+                    }
+                    base.stack.splice(i, 1);
+                    i--;
                 }
             }
         }
 
-        // If jobs are present and named as optional they get added to the required list
-        for (let optional in job.optional) {
-            for (let k = 0; k < tree.jobs.length; k++) {
-                if (tree.jobs[k].provides[optional] === true) {
-                    job.requires[optional] = true;
+        // Cross reference (reverse) dependencies
+        for (let job of base.stack) {
+            for (let name in job.optional) {
+                for (let other of base.stack) {
+                    if (other.provides[name]) {
+                        job.requires[name] = true;
+                    }
+                }
+            }
+            for (let name in job.before) {
+                for (let other of base.stack) {
+                    if (other.provides[name]) {
+                        other.after[job.name] = true;
+                    }
                 }
             }
         }
-    }
 
-    //Sort roughly on dependency amount
-    tree.jobs.sort(function (a, b) {
-        let ad = Object.keys(a.requires).length;
-        let bd = Object.keys(b.requires).length;
+        // Determine execution order
+        for (let job of base.stack) {
+            for (let req in job.requires) {
+                for (let other of base.stack) {
+                    if (other.provides[req] === true) {
+                        job.doneBefore[other.name] = true;
+                    }
+                }
+            }
+            for (let optional in job.optional) {
+                for (let other of base.stack) {
+                    if (other.provides[optional] === true) {
+                        job.doneBefore[other.name] = true;
+                    }
+                }
+            }
+            for (let notif in job.notif) {
+                for (let other of base.stack) {
+                    if (other.provides[notif] === true) {
+                        job.doneBefore[other.name] = true;
+                    }
+                }
+            }
+            for (let after in job.after) {
+                for (let other of base.stack) {
+                    if (other.provides[after] === true) {
+                        job.doneBefore[other.name] = true;
+                    }
+                }
+            }
+        }
 
-        if (ad === bd) {
-            if (a.priority) {
-                if (b.priority) {
-                    return b.priority - a.priority;
+        //Sort roughly on dependency amount
+        base.stack.sort(function (a, b) {
+            if (a.doneBefore[b.name] === true) {
+                return 1;
+            } else if (b.doneBefore[a.name] === true) {
+                return -1;
+            }
+
+            let ad = Object.keys(a.requires).length;
+            let bd = Object.keys(b.requires).length;
+
+            if (ad === bd) {
+                if (a.priority) {
+                    if (b.priority) {
+                        return b.priority - a.priority;
+                    } else {
+                        return 0 - a.priority;
+                    }
                 } else {
-                    return 0 - a.priority;
+                    if (b.priority) {
+                        return b.priority;
+                    } else {
+                        return 0;
+                    }
                 }
             } else {
-                if (b.priority) {
-                    return b.priority;
-                } else {
-                    return 0;
+                return ad - bd;
+            }
+        });
+
+    }
+
+    // Replace all jobs by supplied list
+    function set(jobs) {
+        base.jobs = {};
+        add(jobs);
+    }
+
+    // Add supplied jobs to the existing set
+    function add(jobs) {
+        for (let a of arguments) {
+            if (a instanceof Array) {
+                for (let b of a) {
+                    base.jobs[b.name] = b;
+                }
+            } else if (a.name) {
+                base.jobs[a.name] = a;
+            }
+        }
+        rebuild();
+    }
+
+    // Delete job with supplied name(s) from set
+    function remove(jobnames) {
+        function _remove(item) {
+            if ((typeof item === 'string') || item.name) {
+                let keys = Object.keys(base.jobs);
+                for (let i = 0; i < keys.length; i++) {
+                    if (keys[i] === item) {
+                        delete base.jobs[item];
+                    }
+                }
+            } else if (item instanceof Array) {
+                for (let j = 0; j < item.length; j++) {
+                    _remove(item[j]);
                 }
             }
-        } else {
-            return ad - bd;
         }
-    });
+        for (let i = 0; i < arguments.length; i++) {
+            _remove(arguments[i]);
+        }
+        rebuild();
+    }
 
-    /**
-     * Run the initialized jobs, optionally using `context` as an execution context
-     * @param  {[Object]} context Content to be applied with `bind`
-     */
+    // Run the set with the supplied context
     function run(context) {
-        if (tree.debug) {
-            console.log("\x1b[93mRunning new stack.\x1b[0m");
+        if (base.debug) {
+            if (context && context.url) {
+                console.log("\x1b[93mRunning new stack: " + context.url.href + "\x1b[0m");
+            } else {
+                console.log("\x1b[93mRunning new stack.\x1b[0m");
+            }
             var pad = function (a){return("________"+a).slice(-8);};
             var time = function(){let t=process.hrtime();return(t[0]*1000000+t[1]/1000).toFixed(0); };
             var us = time();
         }
+        let ran = {};
         let has = {};
 
         // By far the fastest way to clone an array: https://jsperf.com/new-array-vs-splice-vs-slice/113
-        let stack = new Array(tree.jobs.length);
-        let stackPos = tree.jobs.length;
-        while(stackPos--) { stack[stackPos] = tree.jobs[stackPos]; }
+        let stack = new Array(base.stack.length);
+        let stackPos = base.stack.length;
+        while(stackPos--) { stack[stackPos] = base.stack[stackPos]; }
+        // console.log("Running stack: " + inspect(stack));
 
         function canRun(job) {
-            for (let item in job.notif) {
-                if (has[item] === true) {
+            for (let item in job.doneBefore) {
+                if (ran[item] !== true) {
                     return false;
                 }
             }
@@ -154,9 +253,20 @@ function Resolver(jobs) {
                     return false;
                 }
             }
+            // for (let item in job.notif) {
+            //     if (has[item] === true) {
+            //         return false;
+            //     }
+            // }
             return true;
         }
+
         function shouldRun(job) {
+            for (let item in job.notif) {
+                if (has[item] === true) {
+                    return false;
+                }
+            }
             for (let provide in job.provides) {
                 if (has[provide] !== true) {
                     return true;
@@ -166,18 +276,24 @@ function Resolver(jobs) {
         }
 
         function doneHandler () {
-            for (let i = 0; i < arguments.length; i++) {
-                has[arguments[i]] = true;
+            for (let item of arguments) {
+                has[item] = true;
             }
         }
 
         function nextHandler () {
-            for (let i = 0; i < stack.length;) {
+            for (let i = 0; i < stack.length; i++) {
                 if (canRun(stack[i])) {
                     let job = stack.splice(i, 1)[0];
+                    if (base.debug) {
+                        console.log(pad(time() - us) + "μs: Ran: \x1b[93m" +
+                                    Object.keys(ran).join(', ') +
+                                    "\x1b[0m. Next: " + job.name);
+                    }
+                    ran[job.name] = true;
                     if (shouldRun(job)) {
-                        if (tree.debug) {
-                            console.log(pad(time() - us) + "μs: Done: \x1b[92m" +
+                        if (base.debug) {
+                            console.log("           Done: \x1b[92m" +
                                         Object.keys(has).join(', ') +
                                         "\x1b[0m. Starting: \x1b[94m" +
                                         job.name +
@@ -188,23 +304,20 @@ function Resolver(jobs) {
                         } else {
                             job.task(doneHandler, nextHandler);
                         }
-                        break;
-                    } else {
-                        if (tree.debug) {
-                            console.log("Skipping job: \x1b[94m" + job.name +
-                                        "\x1b[0m, all possible outcomes already satisfied by previous middleware.");
-                        }
                     }
-                } else {
-                    i++;
+                    i = 0;
                 }
             }
         }
 
         // Initiate the run
         nextHandler();
+        if (base.debug) {
+            console.log("Remaining stack: " + inspect(stack));
+        }
     }
-    return tree;
-}
 
-module.exports = Resolver;
+    add(middlewares);
+
+    return base;
+};
